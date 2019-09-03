@@ -5,7 +5,9 @@ from __future__ import print_function
 from paho.mqtt.client import Client as MqttClient
 from pyModbusTCP.client import ModbusClient
 import threading
+import logging
 import time
+import sys
 import os
 
 
@@ -45,12 +47,17 @@ state = {
 }
 
 
+def mqtt_publish(mqtt, topic, payload, retain=False):
+    logging.info('[mqtt] > %s = %s', topic, payload)
+    mqtt.publish(topic, payload, retain=retain)
+
+
 def mqtt_received(mqtt, userdata, message):
     modbus, lock = userdata
     payload = message.payload
     topic = message.topic
 
-    print('mqtt <', topic, payload)
+    logging.info('[mqtt] received %s = %s', topic, payload)
 
     # enable / disable manual control
     if topic == 'msr23/manual/set' and payload in (b'0FF', b'ON'):
@@ -60,7 +67,7 @@ def mqtt_received(mqtt, userdata, message):
 
             state['manual'] = (payload == b'ON')
             modbus.write_single_register(37, 0 if state['manual'] else 2)
-            mqtt.publish('msr23/manual', payload, retain=True)
+            mqtt_publish(mqtt, 'msr23/manual', payload, retain=True)
 
         return
 
@@ -74,7 +81,7 @@ def mqtt_received(mqtt, userdata, message):
             speed = int(float(payload))
             state['speed']['manual'] = speed
             modbus.write_single_register(34, speed)
-            mqtt.publish('msr23/speed/manual', str(speed), retain=True)
+            mqtt_publish(mqtt, 'msr23/speed/manual', str(speed), retain=True)
 
         return
 
@@ -86,7 +93,7 @@ def mqtt_received(mqtt, userdata, message):
 
             state['bypass']['mode'] = str(payload)
             modbus.write_single_register(12, (b'OFF', b'ON', b'AUTO').index(payload))
-            mqtt.publish('msr23/bypass/mode', payload, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/mode', payload, retain=True)
 
         return
 
@@ -99,7 +106,7 @@ def mqtt_received(mqtt, userdata, message):
 
             state['bypass']['auto']['outside'] = int(float(payload))
             modbus.write_single_register(13, int(float(payload)))
-            mqtt.publish('msr23/bypass/auto/outside', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/outside', int(float(payload)), retain=True)
 
         return
 
@@ -112,7 +119,7 @@ def mqtt_received(mqtt, userdata, message):
 
             state['bypass']['auto']['inside'] = int(float(payload))
             modbus.write_single_register(14, int(float(payload)))
-            mqtt.publish('msr23/bypass/auto/inside', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/inside', int(float(payload)), retain=True)
 
         return
 
@@ -125,7 +132,7 @@ def mqtt_received(mqtt, userdata, message):
 
             state['heater']['temp'] = int(float(payload))
             modbus.write_single_register(18, int(float(payload)))
-            mqtt.publish('msr23/heater/temp', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/heater/temp', int(float(payload)), retain=True)
 
         return
 
@@ -157,7 +164,9 @@ def main():
 
         with lock:
             if not modbus.is_open():
+                logging.info('[modbus] connecting...')
                 modbus.open()
+                logging.info('[modbus] connected')
 
             bypass = modbus.read_holding_registers(12, 3)
             heater = modbus.read_holding_registers(18, 4)
@@ -171,64 +180,64 @@ def main():
         bypass_mode = ('OFF', 'ON', 'AUTO')[bypass[0]]
         if state['bypass']['mode'] != bypass_mode:
             state['bypass']['mode'] = bypass_mode
-            mqtt.publish('msr23/bypass/mode', bypass_mode, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/mode', bypass_mode, retain=True)
 
         bypass_outside = bypass[1]
         if state['bypass']['auto']['outside'] != bypass_outside:
             state['bypass']['auto']['outside'] = bypass_outside
-            mqtt.publish('msr23/bypass/auto/outside', bypass_outside, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/outside', bypass_outside, retain=True)
 
         bypass_inside = bypass[2]
         if state['bypass']['auto']['inside'] != bypass_inside:
             state['bypass']['auto']['inside'] = bypass_inside
-            mqtt.publish('msr23/bypass/auto/inside', bypass_inside, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/inside', bypass_inside, retain=True)
 
         heater_temp = heater[0]
         if state['heater']['temp'] != heater_temp:
             state['heater']['temp'] = heater_temp
-            mqtt.publish('msr23/heater/temp', str(heater_temp), retain=True)
+            mqtt_publish(mqtt, 'msr23/heater/temp', str(heater_temp), retain=True)
 
         heater_level = heater[3]
         if state['heater']['level'] != heater_level:
             state['heater']['level'] = heater_level
-            mqtt.publish('msr23/heater/level', str(heater_level), retain=True)
+            mqtt_publish(mqtt, 'msr23/heater/level', str(heater_level), retain=True)
 
         manual_mode = ('ON', None, 'OFF')[data[3]]
         if state['manual'] != manual_mode:
             state['manual'] = manual_mode
-            mqtt.publish('msr23/manual', manual_mode, retain=True)
+            mqtt_publish(mqtt, 'msr23/manual', manual_mode, retain=True)
 
         bypass_relay = ('OFF', 'ON')[data[8]]
         if state['bypass']['relay'] != bypass_relay:
             state['bypass']['relay'] = bypass_relay
-            mqtt.publish('msr23/bypass/relay', bypass_relay, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/relay', bypass_relay, retain=True)
 
         if data[0] != state['speed']['manual']:
             state['speed']['manual'] = data[0]
-            mqtt.publish('msr23/speed/manual', str(data[0]), retain=True)
+            mqtt_publish(mqtt, 'msr23/speed/manual', str(data[0]), retain=True)
 
         if data[1] != state['speed']['supply']:
             state['speed']['supply'] = data[1]
-            mqtt.publish('msr23/speed/supply', str(data[1]), retain=True)
+            mqtt_publish(mqtt, 'msr23/speed/supply', str(data[1]), retain=True)
 
         if data[2] != state['speed']['extract']:
             state['speed']['extract'] = data[2]
-            mqtt.publish('msr23/speed/extract', str(data[2]), retain=True)
+            mqtt_publish(mqtt, 'msr23/speed/extract', str(data[2]), retain=True)
 
         temp_outside = data[10] / 10.0
         if temp_timeout == 0 or abs(temp_outside - state['temp']['outside']) > 0.3:
             state['temp']['outside'] = temp_outside
-            mqtt.publish('msr23/temp/outside', str(temp_outside))
+            mqtt_publish(mqtt, 'msr23/temp/outside', str(temp_outside))
 
         temp_extract = data[12] / 10.0
         if temp_timeout == 0 or abs(temp_extract - state['temp']['extract']) > 0.3:
             state['temp']['extract'] = temp_extract
-            mqtt.publish('msr23/temp/extract', str(temp_extract))
+            mqtt_publish(mqtt, 'msr23/temp/extract', str(temp_extract))
 
         temp_supply = data[13] / 10.0
         if temp_timeout == 0 or abs(temp_supply - state['temp']['supply']) > 0.3:
             state['temp']['supply'] = temp_supply
-            mqtt.publish('msr23/temp/supply', str(temp_supply))
+            mqtt_publish(mqtt, 'msr23/temp/supply', str(temp_supply))
 
         if temp_timeout == 0:
             temp_timeout = 60
@@ -237,6 +246,9 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
+
     if os.getenv('MQTT_HOST') is not None:
         MQTT_HOST = os.getenv('MQTT_HOST')
 
