@@ -231,7 +231,7 @@ def main():
             mqtt.publish('msr23/temp/supply', str(temp_supply))
 
         if temp_timeout == 0:
-            temp_timeout = 120
+            temp_timeout = 60
         else:
             temp_timeout -= 1
 
