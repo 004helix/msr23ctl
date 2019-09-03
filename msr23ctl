@@ -1,0 +1,252 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+from paho.mqtt.client import Client as MqttClient
+from pyModbusTCP.client import ModbusClient
+import threading
+import time
+import os
+
+
+# modbus tcp server
+MODBUS_HOST = '192.168.100.100'
+MODBUS_PORT = 502
+
+# mqtt broker
+MQTT_HOST = 'mosquitto'
+MQTT_PORT = 1883
+
+
+state = {
+    'manual': None,            # manual mode: ON, OFF
+    'bypass': {
+        'relay': None,         # ON, OFF
+        'mode': None,          # ON, OFF, AUTO
+        'auto': {
+            'inside': None,    # above this temperature, BYPASS is ON ( Tinside > )
+            'outside': None,   # above this temperature, BYPASS is ON ( Toutside > )
+        },
+    },
+    'heater': {
+        'temp': None,          # heater temp (target)
+        'level': None,         # heater output level
+    },
+    'speed': {
+        'manual': None,        # speed in manual mode
+        'supply': None,        # supply fan speed
+        'extract': None,       # extract fan speed
+    },
+    'temp': {
+        'outside': None,       # outside (input)
+        'extract': None,       # extract temp
+        'supply': None,        # supply temp
+    },
+}
+
+
+def mqtt_received(mqtt, userdata, message):
+    modbus, lock = userdata
+    payload = message.payload
+    topic = message.topic
+
+    print('mqtt <', topic, payload)
+
+    # enable / disable manual control
+    if topic == 'msr23/manual/set' and payload in (b'0FF', b'ON'):
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            state['manual'] = (payload == b'ON')
+            modbus.write_single_register(37, 0 if state['manual'] else 2)
+            mqtt.publish('msr23/manual', payload, retain=True)
+
+        return
+
+    # set fan speed
+    if topic == 'msr23/speed/set' and \
+       payload.replace(".", "", 1).isdigit() and 0 <= int(float(payload)) <= 100:
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            speed = int(float(payload))
+            state['speed']['manual'] = speed
+            modbus.write_single_register(34, speed)
+            mqtt.publish('msr23/speed/manual', str(speed), retain=True)
+
+        return
+
+    # set bypass mode
+    if topic == 'msr23/bypass/mode/set' and payload in (b'OFF', b'ON', b'AUTO'):
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            state['bypass']['mode'] = str(payload)
+            modbus.write_single_register(12, (b'OFF', b'ON', b'AUTO').index(payload))
+            mqtt.publish('msr23/bypass/mode', payload, retain=True)
+
+        return
+
+    # set bypass temp outside
+    if topic == 'msr23/bypass/auto/outside/set' and \
+       payload.replace(".", "", 1).isdigit() and 5 <= float(payload) <= 40:
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            state['bypass']['auto']['outside'] = int(float(payload))
+            modbus.write_single_register(13, int(float(payload)))
+            mqtt.publish('msr23/bypass/auto/outside', int(float(payload)), retain=True)
+
+        return
+
+    # set bypass temp inside
+    if topic == 'msr23/bypass/auto/inside/set' and \
+       payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 40:
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            state['bypass']['auto']['inside'] = int(float(payload))
+            modbus.write_single_register(14, int(float(payload)))
+            mqtt.publish('msr23/bypass/auto/inside', int(float(payload)), retain=True)
+
+        return
+
+    # set heater temp
+    if topic == 'msr23/heater/temp/set' and \
+       payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 50:
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            state['heater']['temp'] = int(float(payload))
+            modbus.write_single_register(18, int(float(payload)))
+            mqtt.publish('msr23/heater/temp', int(float(payload)), retain=True)
+
+        return
+
+
+def main():
+    # create lock
+    lock = threading.Lock()
+
+    # create modbus client
+    modbus = ModbusClient()
+    modbus.host(MODBUS_HOST)
+    modbus.port(MODBUS_PORT)
+
+    # create mqtt client
+    mqtt = MqttClient('msr23')
+    mqtt.on_message = mqtt_received
+    mqtt.user_data_set((modbus, lock))
+    mqtt.connect(MQTT_HOST, port=MQTT_PORT)
+    mqtt.loop_start()
+    mqtt.subscribe('msr23/bypass/+/set')
+    mqtt.subscribe('msr23/bypass/auto/+/set')
+    mqtt.subscribe('msr23/heater/+/set')
+    mqtt.subscribe('msr23/+/set')
+
+    temp_timeout = 0
+
+    while True:
+        time.sleep(1)
+
+        with lock:
+            if not modbus.is_open():
+                modbus.open()
+
+            bypass = modbus.read_holding_registers(12, 3)
+            heater = modbus.read_holding_registers(18, 4)
+            data = modbus.read_holding_registers(34, 15)
+
+        if not bypass or not heater or not data:
+            continue
+
+        #print(bypass, heater, data)
+
+        bypass_mode = ('OFF', 'ON', 'AUTO')[bypass[0]]
+        if state['bypass']['mode'] != bypass_mode:
+            state['bypass']['mode'] = bypass_mode
+            mqtt.publish('msr23/bypass/mode', bypass_mode, retain=True)
+
+        bypass_outside = bypass[1]
+        if state['bypass']['auto']['outside'] != bypass_outside:
+            state['bypass']['auto']['outside'] = bypass_outside
+            mqtt.publish('msr23/bypass/auto/outside', bypass_outside, retain=True)
+
+        bypass_inside = bypass[2]
+        if state['bypass']['auto']['inside'] != bypass_inside:
+            state['bypass']['auto']['inside'] = bypass_inside
+            mqtt.publish('msr23/bypass/auto/inside', bypass_inside, retain=True)
+
+        heater_temp = heater[0]
+        if state['heater']['temp'] != heater_temp:
+            state['heater']['temp'] = heater_temp
+            mqtt.publish('msr23/heater/temp', str(heater_temp), retain=True)
+
+        heater_level = heater[3]
+        if state['heater']['level'] != heater_level:
+            state['heater']['level'] = heater_level
+            mqtt.publish('msr23/heater/level', str(heater_level), retain=True)
+
+        manual_mode = ('ON', None, 'OFF')[data[3]]
+        if state['manual'] != manual_mode:
+            state['manual'] = manual_mode
+            mqtt.publish('msr23/manual', manual_mode, retain=True)
+
+        bypass_relay = ('OFF', 'ON')[data[8]]
+        if state['bypass']['relay'] != bypass_relay:
+            state['bypass']['relay'] = bypass_relay
+            mqtt.publish('msr23/bypass/relay', bypass_relay, retain=True)
+
+        if data[0] != state['speed']['manual']:
+            state['speed']['manual'] = data[0]
+            mqtt.publish('msr23/speed/manual', str(data[0]), retain=True)
+
+        if data[1] != state['speed']['supply']:
+            state['speed']['supply'] = data[1]
+            mqtt.publish('msr23/speed/supply', str(data[1]), retain=True)
+
+        if data[2] != state['speed']['extract']:
+            state['speed']['extract'] = data[2]
+            mqtt.publish('msr23/speed/extract', str(data[2]), retain=True)
+
+        temp_outside = data[10] / 10.0
+        if temp_timeout == 0 or abs(temp_outside - state['temp']['outside']) > 0.3:
+            state['temp']['outside'] = temp_outside
+            mqtt.publish('msr23/temp/outside', str(temp_outside))
+
+        temp_extract = data[12] / 10.0
+        if temp_timeout == 0 or abs(temp_extract - state['temp']['extract']) > 0.3:
+            state['temp']['extract'] = temp_extract
+            mqtt.publish('msr23/temp/extract', str(temp_extract))
+
+        temp_supply = data[13] / 10.0
+        if temp_timeout == 0 or abs(temp_supply - state['temp']['supply']) > 0.3:
+            state['temp']['supply'] = temp_supply
+            mqtt.publish('msr23/temp/supply', str(temp_supply))
+
+        if temp_timeout == 0:
+            temp_timeout = 120
+        else:
+            temp_timeout -= 1
+
+
+if __name__ == '__main__':
+    if os.getenv('MQTT_HOST') is not None:
+        MQTT_HOST = os.getenv('MQTT_HOST')
+
+    if os.getenv('MQTT_PORT') is not None:
+        MQTT_PORT = int(os.getenv('MQTT_PORT'))
+
+    if os.getenv('MODBUS_HOST') is not None:
+        MODBUS_HOST = os.getenv('MODBUS_HOST')
+
+    if os.getenv('MODBUS_PORT') is not None:
+        MODBUS_PORT = int(os.getenv('MODBUS_PORT'))
+
+    main()
