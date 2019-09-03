@@ -47,6 +47,13 @@ state = {
 }
 
 
+def modbus_check(modbus):
+    if not modbus.is_open():
+        logging.info('[modbus] connecting...')
+        modbus.open()
+        logging.info('[modbus] connected')
+
+
 def mqtt_publish(mqtt, topic, payload, retain=False):
     logging.info('[mqtt] > %s = %s', topic, payload)
     mqtt.publish(topic, payload, retain=retain)
@@ -62,9 +69,7 @@ def mqtt_received(mqtt, userdata, message):
     # enable / disable manual control
     if topic == 'msr23/manual/set' and payload in (b'0FF', b'ON'):
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             state['manual'] = (payload == b'ON')
             modbus.write_single_register(37, 0 if state['manual'] else 2)
             mqtt_publish(mqtt, 'msr23/manual', payload, retain=True)
@@ -75,9 +80,7 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/speed/set' and \
        payload.replace(".", "", 1).isdigit() and 0 <= int(float(payload)) <= 100:
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             speed = int(float(payload))
             state['speed']['manual'] = speed
             modbus.write_single_register(34, speed)
@@ -88,9 +91,7 @@ def mqtt_received(mqtt, userdata, message):
     # set bypass mode
     if topic == 'msr23/bypass/mode/set' and payload in (b'OFF', b'ON', b'AUTO'):
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             state['bypass']['mode'] = str(payload)
             modbus.write_single_register(12, (b'OFF', b'ON', b'AUTO').index(payload))
             mqtt_publish(mqtt, 'msr23/bypass/mode', payload, retain=True)
@@ -101,9 +102,7 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/bypass/auto/outside/set' and \
        payload.replace(".", "", 1).isdigit() and 5 <= float(payload) <= 40:
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             state['bypass']['auto']['outside'] = int(float(payload))
             modbus.write_single_register(13, int(float(payload)))
             mqtt_publish(mqtt, 'msr23/bypass/auto/outside', int(float(payload)), retain=True)
@@ -114,9 +113,7 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/bypass/auto/inside/set' and \
        payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 40:
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             state['bypass']['auto']['inside'] = int(float(payload))
             modbus.write_single_register(14, int(float(payload)))
             mqtt_publish(mqtt, 'msr23/bypass/auto/inside', int(float(payload)), retain=True)
@@ -127,9 +124,7 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/heater/temp/set' and \
        payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 50:
         with lock:
-            if not modbus.is_open():
-                modbus.open()
-
+            modbus_check(modbus)
             state['heater']['temp'] = int(float(payload))
             modbus.write_single_register(18, int(float(payload)))
             mqtt_publish(mqtt, 'msr23/heater/temp', int(float(payload)), retain=True)
@@ -163,11 +158,7 @@ def main():
         time.sleep(1)
 
         with lock:
-            if not modbus.is_open():
-                logging.info('[modbus] connecting...')
-                modbus.open()
-                logging.info('[modbus] connected')
-
+            modbus_check(modbus)
             bypass = modbus.read_holding_registers(12, 3)
             heater = modbus.read_holding_registers(18, 4)
             data = modbus.read_holding_registers(34, 15)
