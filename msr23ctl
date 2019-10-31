@@ -59,6 +59,13 @@ def mqtt_publish(mqtt, topic, payload, retain=False):
     mqtt.publish(topic, payload, retain=retain)
 
 
+def get_temp(raw):
+    # convert unsigned short to signed
+    temp = raw - 65536 if raw > 32767 else raw
+    # divide
+    return temp / 10.0
+
+
 def mqtt_received(mqtt, userdata, message):
     modbus, lock = userdata
     payload = message.payload
@@ -215,17 +222,17 @@ def main():
             state['speed']['extract'] = data[2]
             mqtt_publish(mqtt, 'msr23/speed/extract', str(data[2]), retain=True)
 
-        temp_outside = data[10] / 10.0
+        temp_outside = get_temp(data[10])
         if temp_timeout == 0 or abs(temp_outside - state['temp']['outside']) > 0.3:
             state['temp']['outside'] = temp_outside
             mqtt_publish(mqtt, 'msr23/temp/outside', str(temp_outside))
 
-        temp_extract = data[12] / 10.0
+        temp_extract = get_temp(data[12])
         if temp_timeout == 0 or abs(temp_extract - state['temp']['extract']) > 0.3:
             state['temp']['extract'] = temp_extract
             mqtt_publish(mqtt, 'msr23/temp/extract', str(temp_extract))
 
-        temp_supply = data[13] / 10.0
+        temp_supply = get_temp(data[13])
         if temp_timeout == 0 or abs(temp_supply - state['temp']['supply']) > 0.3:
             state['temp']['supply'] = temp_supply
             mqtt_publish(mqtt, 'msr23/temp/supply', str(temp_supply))
