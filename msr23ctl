@@ -93,13 +93,13 @@ def mqtt_received(mqtt, userdata, message):
             modbus_check(modbus)
             state['manual'] = (payload == b'ON')
             modbus.write_single_register(37, 0 if state['manual'] else 2)
-            mqtt_publish(mqtt, 'msr23/manual', payload, retain=True)
+            mqtt_publish(mqtt, 'msr23/manual', payload.decode('utf-8'), retain=True)
 
         return
 
     # set fan speed
     if topic == 'msr23/speed/set' and \
-       payload.replace(".", "", 1).isdigit() and 0 <= int(float(payload)) <= 100:
+       payload.replace(b'.', b'', 1).isdigit() and 0 <= int(float(payload)) <= 100:
         with lock:
             modbus_check(modbus)
             speed = int(float(payload))
@@ -113,31 +113,31 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/bypass/mode/set' and payload in (b'OFF', b'ON', b'AUTO'):
         with lock:
             modbus_check(modbus)
-            state['bypass']['mode'] = str(payload)
+            state['bypass']['mode'] = payload.decode('utf-8')
             modbus.write_single_register(12, (b'OFF', b'ON', b'AUTO').index(payload))
-            mqtt_publish(mqtt, 'msr23/bypass/mode', payload, retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/mode', payload.decode('utf-8'), retain=True)
 
         return
 
     # set bypass temp outside
     if topic == 'msr23/bypass/auto/outside/set' and \
-       payload.replace(".", "", 1).isdigit() and 5 <= float(payload) <= 40:
+       payload.replace(b'.', b'', 1).isdigit() and 5 <= float(payload) <= 40:
         with lock:
             modbus_check(modbus)
             state['bypass']['auto']['outside'] = int(float(payload))
             modbus.write_single_register(13, int(float(payload)))
-            mqtt_publish(mqtt, 'msr23/bypass/auto/outside', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/outside', str(int(float(payload))), retain=True)
 
         return
 
     # set bypass temp inside
     if topic == 'msr23/bypass/auto/inside/set' and \
-       payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 40:
+       payload.replace(b'.', b'', 1).isdigit() and 15 <= float(payload) <= 40:
         with lock:
             modbus_check(modbus)
             state['bypass']['auto']['inside'] = int(float(payload))
             modbus.write_single_register(14, int(float(payload)))
-            mqtt_publish(mqtt, 'msr23/bypass/auto/inside', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/bypass/auto/inside', str(int(float(payload))), retain=True)
 
         return
 
@@ -145,20 +145,20 @@ def mqtt_received(mqtt, userdata, message):
     if topic == 'msr23/heater/mode/set' and payload in (b'OFF', b'ELECTRIC', b'WATER', b'FREON_COOLER'):
         with lock:
             modbus_check(modbus)
-            state['heater']['mode'] = str(payload)
+            state['heater']['mode'] = payload.decode('utf-8')
             modbus.write_single_register(17, (b'OFF', b'ELECTRIC', b'WATER', b'FREON_COOLER').index(payload))
-            mqtt_publish(mqtt, 'msr23/heater/mode', payload, retain=True)
+            mqtt_publish(mqtt, 'msr23/heater/mode', payload.decode('utf-8'), retain=True)
 
         return
 
     # set heater temp
     if topic == 'msr23/heater/temp/set' and \
-       payload.replace(".", "", 1).isdigit() and 15 <= float(payload) <= 50:
+       payload.replace(b'.', b'', 1).isdigit() and 15 <= float(payload) <= 50:
         with lock:
             modbus_check(modbus)
             state['heater']['temp'] = int(float(payload))
             modbus.write_single_register(18, int(float(payload)))
-            mqtt_publish(mqtt, 'msr23/heater/temp', int(float(payload)), retain=True)
+            mqtt_publish(mqtt, 'msr23/heater/temp', str(int(float(payload))), retain=True)
 
         return
 
