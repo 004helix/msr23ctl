@@ -1,7 +1,6 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-from __future__ import print_function
 from paho.mqtt.client import Client as MqttClient
 from pyModbusTCP.client import ModbusClient
 import threading
@@ -55,8 +54,17 @@ def modbus_check(modbus):
         logging.info('[modbus] connected')
 
 
-def mqtt_publish(mqtt, topic, payload, retain=False):
-    logging.info('[mqtt] > %s = %s', topic, payload)
+def mqtt_connected(mqtt, userdata, flags, rc):
+    if rc == 0:
+        mqtt.subscribe('msr23/bypass/auto/+/set')
+        mqtt.subscribe('msr23/bypass/+/set')
+        mqtt.subscribe('msr23/heater/+/set')
+        mqtt.subscribe('msr23/+/set')
+
+
+def mqtt_publish(mqtt, topic, payload, retain=False, quiet=False):
+    if not quiet:
+        logging.info('[mqtt] > %s = %s', topic, payload)
     mqtt.publish(topic, payload, retain=retain)
 
 
@@ -162,15 +170,12 @@ def main():
     # create mqtt client
     mqtt = MqttClient('msr23')
     mqtt.on_message = mqtt_received
+    mqtt.on_connect = mqtt_connected
     mqtt.user_data_set((modbus, lock))
-    mqtt.connect(MQTT_HOST, port=MQTT_PORT)
+    mqtt.connect_async(MQTT_HOST, port=MQTT_PORT, keepalive=30)
     mqtt.loop_start()
-    mqtt.subscribe('msr23/bypass/+/set')
-    mqtt.subscribe('msr23/bypass/auto/+/set')
-    mqtt.subscribe('msr23/heater/+/set')
-    mqtt.subscribe('msr23/+/set')
 
-    temp_timeout = 0
+    temp_report = 0
 
     while True:
         time.sleep(1)
@@ -182,6 +187,8 @@ def main():
 
         if not data1 or not data2:
             continue
+
+        now = time.monotonic()
 
         bypass_mode = ('OFF', 'ON', 'AUTO')[data1[0]]
         if state['bypass']['mode'] != bypass_mode:
@@ -239,24 +246,22 @@ def main():
             mqtt_publish(mqtt, 'msr23/speed/extract', str(speed_extract), retain=True)
 
         temp_outside = get_temp(data2[10])
-        if temp_timeout == 0 or abs(temp_outside - state['temp']['outside']) > 0.3:
+        if now >= temp_report or abs(temp_outside - state['temp']['outside']) > 0.3:
             state['temp']['outside'] = temp_outside
-            mqtt_publish(mqtt, 'msr23/temp/outside', str(temp_outside))
+            mqtt_publish(mqtt, 'msr23/temp/outside', str(temp_outside), quiet=True)
 
         temp_extract = get_temp(data2[12])
-        if temp_timeout == 0 or abs(temp_extract - state['temp']['extract']) > 0.3:
+        if now >= temp_report or abs(temp_extract - state['temp']['extract']) > 0.3:
             state['temp']['extract'] = temp_extract
-            mqtt_publish(mqtt, 'msr23/temp/extract', str(temp_extract))
+            mqtt_publish(mqtt, 'msr23/temp/extract', str(temp_extract), quiet=True)
 
         temp_supply = get_temp(data2[13])
-        if temp_timeout == 0 or abs(temp_supply - state['temp']['supply']) > 0.3:
+        if now >= temp_report or abs(temp_supply - state['temp']['supply']) > 0.3:
             state['temp']['supply'] = temp_supply
-            mqtt_publish(mqtt, 'msr23/temp/supply', str(temp_supply))
+            mqtt_publish(mqtt, 'msr23/temp/supply', str(temp_supply), quiet=True)
 
-        if temp_timeout == 0:
-            temp_timeout = 60
-        else:
-            temp_timeout -= 1
+        if now >= temp_report:
+            temp_report = now + 60
 
 
 if __name__ == '__main__':

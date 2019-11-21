@@ -1,8 +1,7 @@
 FROM alpine:latest
 LABEL maintainer "Raman Shyshniou <rommer@ibuffed.com>"
 
-COPY . /opt
-WORKDIR /opt
-RUN apk --no-cache add tini python py-paho-mqtt py-pip && pip install pyModbusTCP
+COPY msr23ctl /usr/bin/msr23ctl
+RUN apk --no-cache add tini python3 py3-paho-mqtt py3-pip && pip3 install pyModbusTCP
 
-ENTRYPOINT ["/sbin/tini", "--", "/opt/msr23ctl"]
+ENTRYPOINT ["/sbin/tini", "--", "msr23ctl"]
