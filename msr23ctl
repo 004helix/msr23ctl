@@ -85,7 +85,7 @@ def mqtt_received(mqtt, userdata, message):
     payload = message.payload
     topic = message.topic
 
-    logging.info('[mqtt] received %s = %s', topic, payload)
+    logging.info('[mqtt] received %s = %s', topic, payload.decode('utf-8'))
 
     # enable / disable manual control
     if topic == 'msr23/manual/set' and payload in (b'0FF', b'ON'):
