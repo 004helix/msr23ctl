@@ -55,8 +55,10 @@ def terminate(signum, frame):
 def modbus_check(modbus):
     if not modbus.is_open():
         logging.info('[modbus] connecting...')
-        modbus.open()
-        logging.info('[modbus] connected')
+        if modbus.open():
+            logging.info('[modbus] connected')
+        else:
+            logging.warning('[modbus] connect failed')
 
 
 def mqtt_connected(mqtt, userdata, flags, rc):
