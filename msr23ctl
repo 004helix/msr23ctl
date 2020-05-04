@@ -21,30 +21,31 @@ MQTT_PORT = 1883
 
 
 state = {
-    'manual': None,            # manual mode: ON, OFF
+    'manual': None,            # (RW) manual mode: ON, OFF
     'bypass': {
-        'relay': None,         # ON, OFF
-        'mode': None,          # ON, OFF, AUTO
+        'relay': None,         # (RO) status: ON, OFF
+        'mode': None,          # (RW) ON, OFF, AUTO
         'auto': {
-            'inside': None,    # above this temperature, BYPASS is ON ( Tinside > )
-            'outside': None,   # above this temperature, BYPASS is ON ( Toutside > )
+            'inside': None,    # (RW) above this temperature, BYPASS is ON ( Tinside > )
+            'outside': None,   # (RW) above this temperature, BYPASS is ON ( Toutside > )
         },
     },
     'heater': {
-        'mode': None,          # OFF, ELECTRIC, WATER, FREON_COOLER
-        'temp': None,          # heater temp (target)
-        'level': None,         # heater output level
+        'mode': None,          # (RW) OFF, ELECTRIC, WATER, FREON_COOLER
+        'temp': None,          # (RW) heater temp (target)
+        'level': None,         # (RO) heater output level
     },
     'speed': {
-        'manual': None,        # speed in manual mode
-        'supply': None,        # supply fan speed
-        'extract': None,       # extract fan speed
+        'manual': None,        # (RW) speed in manual mode
+        'supply': None,        # (RO) supply fan speed
+        'extract': None,       # (RO) extract fan speed
     },
     'temp': {
-        'outside': None,       # outside (input)
-        'extract': None,       # extract temp
-        'supply': None,        # supply temp
+        'outside': None,       # (RO) outside (input)
+        'extract': None,       # (RO) extract temp
+        'supply': None,        # (RO) supply temp
     },
+    'reconnected': False,      # just reconnected
 }
 
 
@@ -56,6 +57,7 @@ def modbus_check(modbus):
     if not modbus.is_open():
         logging.info('[modbus] connecting...')
         if modbus.open():
+            state['reconnected'] = True
             logging.info('[modbus] connected')
         else:
             logging.warning('[modbus] connect failed')
@@ -79,7 +81,7 @@ def get_temp(raw):
     # convert unsigned short to signed
     temp = raw - 65536 if raw > 32767 else raw
     # divide
-    return temp / 10.0
+    return float(temp) / 10.0
 
 
 def mqtt_received(mqtt, userdata, message):
@@ -190,79 +192,107 @@ def main():
         with lock:
             modbus_check(modbus)
             data1 = modbus.read_holding_registers(12, 10)
-            data2 = modbus.read_holding_registers(34, 15)
+            data2 = modbus.read_holding_registers(34, 14)
 
         if not data1 or not data2:
             continue
 
         now = time.monotonic()
 
+        # parse modbus registers
         bypass_mode = ('OFF', 'ON', 'AUTO')[data1[0]]
+        bypass_outside = data1[1]
+        bypass_inside = data1[2]
+        heater_mode = ('OFF', 'ELECTRIC', 'WATER', 'FREON_COOLER')[data1[5]]
+        heater_temp = data1[6]
+        heater_level = data1[9]
+        manual_mode = ('ON', None, 'OFF')[data2[3]]
+        bypass_relay = ('OFF', 'ON')[data2[8]]
+        speed_manual = data2[0]
+        speed_supply = data2[1]
+        speed_extract = data2[2]
+        temp_outside = get_temp(data2[10])
+        temp_extract = get_temp(data2[12])
+        temp_supply = get_temp(data2[13])
+
+        # detect device reset / power loss:
+        # manual fan speed updated to 29% after successful reconnect
+        if state['reconnected'] and \
+           state['manual'] is not None and \
+           state['manual'] and manual_mode and \
+           state['speed']['manual'] is not None and \
+           state['speed']['manual'] != 29 and \
+           speed_manual == 29:
+            # restore manual speed settings
+            state['reconnected'] = False
+            logging.info('[modbus] device reset detected')
+
+            speed_manual = state['speed']['manual']
+            speed_supply = state['speed']['supply']
+            speed_extract = state['speed']['extract']
+            logging.info('[modbus] restoring manual speed {}'.format(speed_manual))
+            with lock:
+                modbus_check(modbus)
+                modbus.write_single_register(34, speed_manual)
+
+            continue
+
+        # reset reconnected state
+        state['reconnected'] = False
+
+        # update state values
         if state['bypass']['mode'] != bypass_mode:
             state['bypass']['mode'] = bypass_mode
             mqtt_publish(mqtt, 'msr23/bypass/mode', bypass_mode, retain=True)
 
-        bypass_outside = data1[1]
         if state['bypass']['auto']['outside'] != bypass_outside:
             state['bypass']['auto']['outside'] = bypass_outside
             mqtt_publish(mqtt, 'msr23/bypass/auto/outside', str(bypass_outside), retain=True)
 
-        bypass_inside = data1[2]
         if state['bypass']['auto']['inside'] != bypass_inside:
             state['bypass']['auto']['inside'] = bypass_inside
             mqtt_publish(mqtt, 'msr23/bypass/auto/inside', str(bypass_inside), retain=True)
 
-        heater_mode = ('OFF', 'ELECTRIC', 'WATER', 'FREON_COOLER')[data1[5]]
         if state['heater']['mode'] != heater_mode:
             state['heater']['mode'] = heater_mode
             mqtt_publish(mqtt, 'msr23/heater/mode', heater_mode, retain=True)
 
-        heater_temp = data1[6]
         if state['heater']['temp'] != heater_temp:
             state['heater']['temp'] = heater_temp
             mqtt_publish(mqtt, 'msr23/heater/temp', str(heater_temp), retain=True)
 
-        heater_level = data1[9]
         if state['heater']['level'] != heater_level:
             state['heater']['level'] = heater_level
             mqtt_publish(mqtt, 'msr23/heater/level', str(heater_level), retain=True)
 
-        manual_mode = ('ON', None, 'OFF')[data2[3]]
         if state['manual'] != manual_mode:
             state['manual'] = manual_mode
             mqtt_publish(mqtt, 'msr23/manual', manual_mode, retain=True)
 
-        bypass_relay = ('OFF', 'ON')[data2[8]]
         if state['bypass']['relay'] != bypass_relay:
             state['bypass']['relay'] = bypass_relay
             mqtt_publish(mqtt, 'msr23/bypass/relay', bypass_relay, retain=True)
 
-        speed_manual = data2[0]
         if state['speed']['manual'] != speed_manual:
             state['speed']['manual'] = speed_manual
             mqtt_publish(mqtt, 'msr23/speed/manual', str(speed_manual), retain=True)
 
-        speed_supply = data2[1]
         if state['speed']['supply'] != speed_supply:
             state['speed']['supply'] = speed_supply
             mqtt_publish(mqtt, 'msr23/speed/supply', str(speed_supply), retain=True)
 
-        speed_extract = data2[2]
         if state['speed']['extract'] != speed_extract:
             state['speed']['extract'] = speed_extract
             mqtt_publish(mqtt, 'msr23/speed/extract', str(speed_extract), retain=True)
 
-        temp_outside = get_temp(data2[10])
         if now >= temp_report or abs(temp_outside - state['temp']['outside']) > 0.3:
             state['temp']['outside'] = temp_outside
             mqtt_publish(mqtt, 'msr23/temp/outside', str(temp_outside), quiet=True)
 
-        temp_extract = get_temp(data2[12])
         if now >= temp_report or abs(temp_extract - state['temp']['extract']) > 0.3:
             state['temp']['extract'] = temp_extract
             mqtt_publish(mqtt, 'msr23/temp/extract', str(temp_extract), quiet=True)
 
-        temp_supply = get_temp(data2[13])
         if now >= temp_report or abs(temp_supply - state['temp']['supply']) > 0.3:
             state['temp']['supply'] = temp_supply
             mqtt_publish(mqtt, 'msr23/temp/supply', str(temp_supply), quiet=True)
