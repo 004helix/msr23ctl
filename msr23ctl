@@ -53,21 +53,28 @@ state = {
 
 
 class ModbusClient(pyModbusTCP.client.ModbusClient):
+    def setlogger(self, logger):
+        self.l = logger
+
     def check(self):
         if not self.is_open():
-            logging.info('[modbus] connecting...')
+            self.l.info('connecting...')
             if self.open():
-                logging.info('[modbus] connected')
+                self.l.info('connected')
                 state['reconnected'] = True
             else:
-                logging.warning('[modbus] connect failed')
+                self.l.warning('connect failed')
 
 
 class MqttClient(paho.mqtt.client.Client):
+    def setlogger(self, logger):
+        self.enable_logger(logger)
+        self.l = logger
+
     def publish(self, topic, payload=None, qos=0, retain=True, quiet=False):
         super(MqttClient, self).publish(topic, payload, qos=qos, retain=retain)
         if not quiet:
-            logging.info('[mqtt] > %s = %s', topic, payload)
+            self.l.info('> %s = %s', topic, payload)
 
 
 def terminate(signum, frame):
@@ -96,7 +103,7 @@ def mqtt_received_cb(mqtt, userdata, message):
     payload = message.payload
     topic = message.topic
 
-    logging.info('[mqtt] received %s = %s', topic, payload.decode('utf-8'))
+    mqtt.l.info('received %s = %s', topic, payload.decode('utf-8'))
 
     # enable / disable manual control
     if topic == 'msr23/manual/set' and payload in (b'0FF', b'ON'):
@@ -161,7 +168,7 @@ def mqtt_received_cb(mqtt, userdata, message):
        payload.replace(b'.', b'', 1).isdigit() and 15 <= float(payload) <= 50:
         heater_temp = int(float(payload))
 
-        bypass_temp = temperature - TEMP_DIFF
+        bypass_temp = heater_temp - TEMP_DIFF
         if bypass_temp < 5:
             bypass_temp = 5
         if bypass_temp > 40:
@@ -187,11 +194,13 @@ def main():
 
     # create modbus client
     modbus = ModbusClient()
+    modbus.setlogger(logging.getLogger('modbus'))
     modbus.host(MODBUS_HOST)
     modbus.port(MODBUS_PORT)
 
     # create mqtt client
     mqtt = MqttClient('msr23')
+    mqtt.setlogger(logging.getLogger('mqtt'))
     mqtt.on_message = mqtt_received_cb
     mqtt.on_connect = mqtt_connected_cb
     mqtt.user_data_set((modbus, lock))
@@ -239,12 +248,12 @@ def main():
            speed_manual == 29:
             # restore manual speed settings
             state['reconnected'] = False
-            logging.info('[modbus] device reset detected')
+            modbus.l.info('device reset detected')
 
             speed_manual = state['speed']['manual']
             speed_supply = state['speed']['supply']
             speed_extract = state['speed']['extract']
-            logging.info('[modbus] restoring manual speed {}'.format(speed_manual))
+            modbus.l.info('restoring manual speed %d', speed_manual)
             with lock:
                 modbus.write_single_register(34, speed_manual)
 
@@ -316,7 +325,7 @@ def main():
 
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-                        format='%(asctime)s %(levelname)s %(message)s')
+                        format='%(asctime)s %(levelname)s [%(name)s] %(message)s')
 
     if os.getenv('MQTT_HOST') is not None:
         MQTT_HOST = os.getenv('MQTT_HOST')
