@@ -182,8 +182,8 @@ def mqtt_received_cb(mqtt, userdata, message):
             if state['bypass']['auto']['outside'] is None or \
                state['bypass']['auto']['outside'] != bypass_temp:
                 if modbus.write_single_register(13, bypass_temp):
-                    mqtt.publish('msr23/bypass/auto/inside', str(bypass_temp))
-                    state['bypass']['auto']['inside'] = bypass_temp
+                    mqtt.publish('msr23/bypass/auto/outside', str(bypass_temp))
+                    state['bypass']['auto']['outside'] = bypass_temp
 
         return
 
