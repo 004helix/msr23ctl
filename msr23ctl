@@ -222,11 +222,11 @@ def main():
                 data1 = modbus.read_holding_registers(12, 10)
                 data2 = modbus.read_holding_registers(34, 14)
                 if not state['status']:
-                    mqtt.publish('msr23/status', b'ONLINE')
+                    mqtt.publish('msr23/status', 'ONLINE')
                     state['status'] = True
             else:
                 if state['status']:
-                    mqtt.publish('msr23/status', b'OFFLINE')
+                    mqtt.publish('msr23/status', 'OFFLINE')
                     state['status'] = False
                 continue
 
