@@ -24,6 +24,7 @@ TEMP_DIFF = 2
 
 
 state = {
+    'status': False,           # (RO) connection status: ONLINE, OFFLINE
     'manual': None,            # (RW) manual mode: ON, OFF
     'bypass': {
         'relay': None,         # (RO) status: ON, OFF
@@ -57,13 +58,17 @@ class ModbusClient(pyModbusTCP.client.ModbusClient):
         self.l = logger
 
     def check(self):
-        if not self.is_open():
-            self.l.info('connecting...')
-            if self.open():
-                self.l.info('connected')
-                state['reconnected'] = True
-            else:
-                self.l.warning('connect failed')
+        if self.is_open():
+            return True
+
+        self.l.info('connecting...')
+        if self.open():
+            self.l.info('connected')
+            state['reconnected'] = True
+            return True
+
+        self.l.warning('connect failed')
+        return False
 
 
 class MqttClient(paho.mqtt.client.Client):
@@ -213,9 +218,17 @@ def main():
         time.sleep(1)
 
         with lock:
-            modbus.check()
-            data1 = modbus.read_holding_registers(12, 10)
-            data2 = modbus.read_holding_registers(34, 14)
+            if modbus.check():
+                data1 = modbus.read_holding_registers(12, 10)
+                data2 = modbus.read_holding_registers(34, 14)
+                if not state['status']:
+                    mqtt.publish('msr23/status', b'ONLINE')
+                    state['status'] = True
+            else:
+                if state['status']:
+                    mqtt.publish('msr23/status', b'OFFLINE')
+                    state['status'] = False
+                continue
 
         if not data1 or not data2:
             continue
