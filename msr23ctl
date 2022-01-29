@@ -219,8 +219,7 @@ def main():
 
         with lock:
             if modbus.check():
-                data1 = modbus.read_holding_registers(12, 10)
-                data2 = modbus.read_holding_registers(34, 14)
+                data = modbus.read_holding_registers(12, 36)
                 if not state['status']:
                     mqtt.publish('msr23/status', 'ONLINE')
                     state['status'] = True
@@ -230,32 +229,33 @@ def main():
                     state['status'] = False
                 continue
 
-        if not data1 or not data2:
+        if not data:
             continue
 
         now = time.monotonic()
 
         # parse modbus registers
-        bypass_mode = ('OFF', 'ON', 'AUTO')[data1[0]]
-        bypass_outside = data1[1]
-        bypass_inside = data1[2]
-        heater_mode = ('OFF', 'ELECTRIC', 'WATER', 'FREON_COOLER')[data1[5]]
-        heater_temp = data1[6]
-        heater_level = data1[9]
-        manual_mode = ('ON', None, 'OFF')[data2[3]]
-        bypass_relay = ('OFF', 'ON')[data2[8]]
-        speed_manual = data2[0]
-        speed_supply = data2[1]
-        speed_extract = data2[2]
-        temp_outside = parse_temperature(data2[10])
-        temp_extract = parse_temperature(data2[12])
-        temp_supply = parse_temperature(data2[13])
+        data = [0]*12 + data
+        bypass_mode = ('OFF', 'ON', 'AUTO')[data[12]]
+        bypass_outside = data[13]
+        bypass_inside = data[14]
+        heater_mode = ('OFF', 'ELECTRIC', 'WATER', 'FREON_COOLER')[data[17]]
+        heater_temp = data[18]
+        heater_level = data[21]
+        manual_mode = ('ON', None, 'OFF')[data[37]]
+        bypass_relay = ('OFF', 'ON')[data[42]]
+        speed_manual = data[34]
+        speed_supply = data[35]
+        speed_extract = data[36]
+        temp_outside = parse_temperature(data[44])
+        temp_extract = parse_temperature(data[46])
+        temp_supply = parse_temperature(data[47])
 
         # detect device reset / power loss:
         # manual fan speed updated to 29% after successful reconnect
         if state['reconnected'] and \
            state['manual'] is not None and \
-           state['manual'] and manual_mode and \
+           state['manual'] == manual_mode and \
            state['speed']['manual'] is not None and \
            state['speed']['manual'] != 29 and \
            speed_manual == 29:
